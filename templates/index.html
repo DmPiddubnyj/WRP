@@ -1,0 +1,330 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Weather Route Planner</title>
+
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
+</head>
+
+<body>
+
+    <!-- Map -->
+    <div id="map"></div>
+
+
+    <!-- Route Planner Panel -->
+    <div class="route-panel" id="route-panel">
+
+        <!-- Panel Header -->
+        <div class="route-panel-header">
+
+            <strong>Weather Route Planner</strong>
+
+            <button
+                type="button"
+                id="minimize-route-panel"
+                aria-label="Minimize route planner"
+                aria-expanded="true"
+            >
+                −
+            </button>
+
+        </div>
+
+
+        <!-- Panel Content -->
+        <div id="route-panel-content">
+
+            <form id="route-form">
+
+                <label for="start">Starting point</label>
+
+                <input
+                    type="text"
+                    id="start"
+                    placeholder="e.g. Stockholm"
+                    autocomplete="off"
+                    required
+                >
+
+                <div id="start-suggestions" class="suggestions"></div>
+
+
+                <label for="destination">Destination</label>
+
+                <input
+                    type="text"
+                    id="destination"
+                    placeholder="e.g. Gothenburg"
+                    autocomplete="off"
+                    required
+                >
+
+                <div id="destination-suggestions" class="suggestions"></div>
+
+
+                <label for="departure">Departure date</label>
+
+                <input
+                    type="date"
+                    id="departure"
+                    required
+                >
+
+
+                <label for="departure-time">Departure time</label>
+
+                <input
+                    type="time"
+                    id="departure-time"
+                    required
+                >
+
+                <button type="submit">Find route</button>
+
+            </form>
+
+
+            <!-- Route information -->
+            <p id="status" aria-live="polite"></p>
+
+        </div>
+
+    </div>
+    <!-- AI Road Trip Assistant -->
+    <aside id="ai-panel">
+
+        <!-- Assistant Header -->
+        <div class="ai-panel-header">
+            <div class="ai-title">
+                <span class="ai-icon">✦</span>
+                <div>
+                    <h2>AI Road Trip Assistant</h2>
+                    <p>Your intelligent travel companion</p>
+                </div>
+            </div>
+
+            <button
+                type="button"
+                id="minimize-ai-panel"
+                aria-label="Minimize AI assistant"
+            >
+                −
+            </button>
+        </div>
+
+
+        <!-- Assistant Content -->
+        <div id="ai-panel-content">
+
+            <p class="ai-intro">
+                Calculate your route first, then generate a personalised
+                travel report with weather advice, fuel estimates and
+                recommendations.
+            </p>
+
+
+            <!-- Generate Report Button -->
+            <button
+                type="button"
+                id="generate-ai-report"
+                disabled
+            >
+                ✦ Generate AI travel report
+            </button>
+
+            <p class="ai-coming-soon">
+                AI report generation will be available in the next milestone.
+            </p>
+
+
+            <!-- Weather Section -->
+            <section class="ai-section">
+                <div class="ai-section-heading">
+                    <span>🌦️</span>
+                    <h3>Weather analysis</h3>
+                </div>
+
+                <p class="ai-placeholder">
+                    Weather conditions and driving risk along your route.
+                </p>
+            </section>
+
+
+            <!-- Tyre Section -->
+            <section class="ai-section">
+                <div class="ai-section-heading">
+                    <span>❄️</span>
+                    <h3>Tyre recommendations</h3>
+                </div>
+
+                <p class="ai-placeholder">
+                    Seasonal tyre advice and winter driving precautions.
+                </p>
+            </section>
+
+            <!-- Fuel Section -->
+            <section class="ai-section" id="fuel-section">
+
+                <div class="ai-section-heading">
+                    <span>⛽</span>
+                    <h3>Fuel estimate</h3>
+                </div>
+
+                <!-- Vehicle category -->
+                <label for="vehicle-category">Vehicle category</label>
+
+                <select id="vehicle-category">
+                    <option value="small">Small car — 5.5 L/100 km</option>
+                    <option value="medium" selected>Medium car — 7.0 L/100 km</option>
+                    <option value="large">Large car / SUV — 9.0 L/100 km</option>
+                    <option value="van">Van — 10.0 L/100 km</option>
+                </select>
+
+                <!-- Fuel type -->
+                <label for="fuel-type">Fuel type</label>
+
+                <select id="fuel-type">
+                    <option value="petrol">Petrol</option>
+                    <option value="diesel">Diesel</option>
+                </select>
+
+                <!-- Fuel price -->
+                <label for="fuel-price">Fuel price (SEK per litre)</label>
+
+                <input
+                    type="number"
+                    id="fuel-price"
+                    value="18"
+                    min="0"
+                    step="0.01"
+                >
+
+                <p class="ai-placeholder">
+                    Example price: 18 SEK/L. Update this to the price at your local petrol station.
+                </p>
+
+                <!-- Fuel results -->
+                <div id="fuel-results">
+
+                    <div class="fuel-result-row">
+                        <span>Route distance</span>
+                        <strong id="fuel-distance">—</strong>
+                    </div>
+
+                    <div class="fuel-result-row">
+                        <span>Consumption</span>
+                        <strong id="fuel-consumption">—</strong>
+                    </div>
+
+                    <div class="fuel-result-row">
+                        <span>Estimated fuel</span>
+                        <strong id="fuel-litres">—</strong>
+                    </div>
+
+                    <div class="fuel-total">
+                        <span>Estimated fuel cost</span>
+                        <strong id="fuel-cost">—</strong>
+                    </div>
+
+                </div>
+
+                <p class="ai-placeholder">
+                    Estimates are based on average vehicle consumption.
+                    Actual usage depends on driving conditions and vehicle specifications.
+                </p>
+
+            </section>
+
+
+
+            <!-- Places Section -->
+            <section class="ai-section" id="places-section">
+
+                <div class="ai-section-heading">
+                    <span>📍</span>
+                    <h3>Places along your route</h3>
+                </div>
+
+                <div id="places-summary" class="ai-placeholder">
+                    Calculate a route to find nearby places.
+                </div>
+
+                <div id="places-results"></div>
+
+            </section>
+
+
+            <!-- Itinerary Section -->
+            <section class="ai-section">
+                <div class="ai-section-heading">
+                    <span>🗺️</span>
+                    <h3>Travel itinerary</h3>
+                </div>
+
+                <p class="ai-placeholder">
+                    A suggested journey with stops and estimated arrival times.
+                </p>
+            </section>
+
+
+            <!-- Chat Section -->
+            <section class="ai-section">
+                <div class="ai-section-heading">
+                    <span>💬</span>
+                    <h3>Ask your travel assistant</h3>
+                </div>
+
+                <input
+                    type="text"
+                    id="ai-chat-input"
+                    placeholder="Ask something about your journey..."
+                    disabled
+                >
+
+                <button
+                    type="button"
+                    id="ai-chat-send"
+                    disabled
+                >
+                    Send
+                </button>
+
+                <p class="ai-placeholder">
+                    Interactive AI chat will be added later.
+                </p>
+            </section>
+
+        </div>
+    </aside>
+
+    <!-- Reopen Route Planner Button -->
+    <button
+        id="show-route-panel"
+        type="button"
+        hidden
+    >
+        Plan another route
+    </button>
+
+
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Application JavaScript -->
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+
+</body>
+</html>
