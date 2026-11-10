@@ -145,9 +145,17 @@
                 ✦ Generate AI travel report
             </button>
 
-            <p class="ai-coming-soon">
-                AI report generation will be available in the next milestone.
+            <p id="ai-report-status" class="ai-placeholder">
+                Calculate a route to enable AI report generation.
             </p>
+
+            <div id="ai-report-results" hidden>
+
+                <div id="ai-risk-level"></div>
+
+                <div id="ai-overall-summary"></div>
+
+            </div>
 
 
             <!-- Weather Section -->
@@ -157,9 +165,9 @@
                     <h3>Weather analysis</h3>
                 </div>
 
-                <p class="ai-placeholder">
-                    Weather conditions and driving risk along your route.
-                </p>
+                <div id="ai-weather-analysis" class="ai-report-content">
+                    Weather analysis will appear here.
+                </div>
             </section>
 
 
@@ -170,9 +178,9 @@
                     <h3>Tyre recommendations</h3>
                 </div>
 
-                <p class="ai-placeholder">
-                    Seasonal tyre advice and winter driving precautions.
-                </p>
+                <div id="ai-tyre-recommendations" class="ai-report-content">
+                    Tyre recommendations will appear here.
+                </div>
             </section>
 
             <!-- Fuel Section -->
@@ -180,7 +188,7 @@
 
                 <div class="ai-section-heading">
                     <span>⛽</span>
-                    <h3>Fuel estimate</h3>
+                    <h3>Fuel calculator</h3>
                 </div>
 
                 <!-- Vehicle category -->
@@ -238,6 +246,8 @@
                         <span>Estimated fuel cost</span>
                         <strong id="fuel-cost">—</strong>
                     </div>
+                    
+                    <div id="ai-fuel-summary" class="ai-report-content"></div>
 
                 </div>
 
@@ -253,41 +263,62 @@
             <section class="ai-section">
                 <div class="ai-section-heading">
                     <span>🗺️</span>
-                    <h3>Travel itinerary</h3>
+                    <h3>Travel recommendations</h3>
                 </div>
 
-                <p class="ai-placeholder">
-                    A suggested journey with stops and estimated arrival times.
-                </p>
+                <div id="ai-travel-tips" class="ai-report-content">
+                    Travel recommendations will appear here.
+                </div>
             </section>
 
-
             <!-- Chat Section -->
-            <section class="ai-section">
+            <section class="ai-section" id="chat-section">
+
                 <div class="ai-section-heading">
                     <span>💬</span>
                     <h3>Ask your travel assistant</h3>
                 </div>
 
-                <input
-                    type="text"
-                    id="ai-chat-input"
-                    placeholder="Ask something about your journey..."
-                    disabled
+                <!-- Chat messages -->
+                <div
+                    id="ai-chat-messages"
+                    class="ai-chat-messages"
+                    role="log"
+                    aria-live="polite"
+                    aria-label="Conversation with AI travel assistant"
                 >
+                    <div class="chat-message assistant-message">
+                        Hello! I'm your AI travel assistant. Calculate a route and ask me anything about your journey.
+                    </div>
+                </div>
 
-                <button
-                    type="button"
-                    id="ai-chat-send"
-                    disabled
-                >
-                    Send
-                </button>
+                <!-- Chat input -->
+                <div class="ai-chat-input-container">
 
-                <p class="ai-placeholder">
-                    Interactive AI chat will be added later.
+                    <input
+                        type="text"
+                        id="ai-chat-input"
+                        placeholder="Ask something about your journey..."
+                        maxlength="1000"
+                        disabled
+                    >
+
+                    <button
+                        type="button"
+                        id="ai-chat-send"
+                        disabled
+                    >
+                        Send
+                    </button>
+
+                </div>
+
+                <p id="ai-chat-status" class="ai-placeholder">
+                    Calculate a route to start chatting.
                 </p>
+
             </section>
+
 
         </div>
     </aside>

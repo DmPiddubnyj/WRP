@@ -12,7 +12,13 @@ let startMarker = null;
 let destinationMarker = null;
 let routeLayer = null;
 let weatherMarkers = [];
-
+let lastWeatherForecasts = [];
+let lastRoute = null;
+let lastDeparture = null;
+// Store the latest calculated route distance
+let lastRouteDistanceKm = null;
+let chatHistory = [];
+let isChatLoading = false;
 
 // ====================================
 // FIND LOCATION
@@ -186,9 +192,19 @@ function displayWeatherMarkers(forecasts) {
 
 routeForm.addEventListener("submit", async function (event) {
     event.preventDefault();
+    document.getElementById("generate-ai-report").disabled = true;
+    document.getElementById("ai-chat-input").disabled = true;
+    document.getElementById("ai-chat-send").disabled = true;
 
+    chatHistory = [];
+
+    document.getElementById("ai-chat-messages").innerHTML = "";
+
+    addChatMessage(
+        "Your new journey is being calculated. Ask me anything about it when the route is ready!",
+        "assistant"
+    );
     // Get input values
-
     const start = document.getElementById("start").value.trim();
     const destination = document.getElementById("destination").value.trim();
 
@@ -240,6 +256,9 @@ routeForm.addEventListener("submit", async function (event) {
             startLocation,
             destinationLocation
         );
+        lastRoute = route;
+        lastDeparture = departure;
+
         // Update fuel estimate using actual OSRM route distance
         lastRouteDistanceKm = route.distance / 1000;
 
@@ -339,7 +358,21 @@ routeForm.addEventListener("submit", async function (event) {
 
         const forecasts = await getWeather(route, departure);
 
+        lastWeatherForecasts = forecasts;
+
         displayWeatherMarkers(forecasts);
+
+        // Enable AI chatbot after route and weather are ready
+        document.getElementById("ai-chat-input").disabled = false;
+        document.getElementById("ai-chat-send").disabled = false;
+
+        document.getElementById("ai-chat-status").textContent =
+            "Your journey is ready. Ask me anything!";
+        
+        document.getElementById("generate-ai-report").disabled = false;
+
+        document.getElementById("ai-report-status").textContent =
+            "Your route is ready. Generate your AI travel report.";
 
         statusMessage.textContent =
             `Distance: ${distanceKm} km | ` +
@@ -499,10 +532,6 @@ const vehicleConsumption = {
     van: 10.0
 };
 
-// Store the latest calculated route distance
-let lastRouteDistanceKm = null;
-
-
 // Calculate and display fuel estimate
 function updateFuelEstimate(distanceKm) {
 
@@ -525,7 +554,7 @@ function updateFuelEstimate(distanceKm) {
     ) {
         document.getElementById("fuel-litres").textContent = "—";
         document.getElementById("fuel-cost").textContent = "Enter a valid price";
-        return;
+        return null;
     }
 
     // Calculate total fuel consumption
@@ -546,6 +575,15 @@ function updateFuelEstimate(distanceKm) {
 
     document.getElementById("fuel-cost").textContent =
         `${totalCost.toFixed(2)} SEK`;
+    
+    return {
+        distance_km: distanceKm,
+        consumption: consumption,
+        fuel_type: document.getElementById("fuel-type").value,
+        fuel_price: fuelPrice,
+        estimated_litres: fuelLitres,
+        estimated_cost: totalCost
+    };
 }
 
 
@@ -598,3 +636,333 @@ function safeWebsiteUrl(value) {
 
     return "#";
 }
+
+// ====================================
+// GENERATE AI TRAVEL REPORT
+// ====================================
+
+document.getElementById("generate-ai-report")
+    .addEventListener("click", async function () {
+
+        const button = this;
+        const status = document.getElementById("ai-report-status");
+
+        if (!lastRoute || !lastWeatherForecasts.length) {
+            status.textContent = "Please calculate a route first.";
+            return;
+        }
+
+        // Get the latest fuel calculation
+        const fuel = updateFuelEstimate(lastRouteDistanceKm);
+
+        if (!fuel) {
+            status.textContent = "Please enter a valid fuel price.";
+            return;
+        }
+
+        // Calculate arrival time
+        const arrival = new Date(
+            lastDeparture.getTime() + lastRoute.duration * 1000
+        );
+
+        const routeData = {
+            distance_km: lastRouteDistanceKm,
+            driving_time_seconds: lastRoute.duration,
+            departure: lastDeparture.toISOString(),
+            arrival: arrival.toISOString()
+        };
+
+        const requestData = {
+            route: routeData,
+            weather: lastWeatherForecasts,
+            fuel: fuel
+        };
+
+        button.disabled = true;
+        button.textContent = "Generating report...";
+        status.textContent = "Mistral AI is analysing your journey...";
+
+        try {
+
+            const response = await fetch("/ai/travel-report", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(requestData)
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error || "Could not generate travel report."
+                );
+            }
+
+            if (!data.success || !data.report) {
+                throw new Error("Invalid AI report received.");
+            }
+
+            displayAIReport(data.report);
+
+            status.textContent = "Travel report generated successfully.";
+
+        } catch (error) {
+
+            console.error("AI report error:", error);
+
+            status.textContent = error.message;
+
+        } finally {
+
+            button.disabled = false;
+            button.textContent = "✦ Generate AI travel report";
+
+        }
+
+    });
+
+
+// ====================================
+// DISPLAY AI TRAVEL REPORT
+// ====================================
+
+function displayAIReport(report) {
+
+    const results = document.getElementById("ai-report-results");
+
+    results.hidden = false;
+
+    // Risk level
+    const riskElement = document.getElementById("ai-risk-level");
+
+    riskElement.textContent = "Travel risk: " + report.risk_level;
+
+    riskElement.className = "risk-" +
+        report.risk_level.toLowerCase();
+
+    // Overall summary
+    document.getElementById("ai-overall-summary").textContent =
+        report.overall_summary;
+
+    // Weather analysis
+    document.getElementById("ai-weather-analysis").textContent =
+        report.weather_analysis;
+
+    // Tyre recommendations
+    document.getElementById("ai-tyre-recommendations").textContent =
+        report.tyre_recommendations;
+
+    // Fuel summary
+    document.getElementById("ai-fuel-summary").textContent =
+        report.fuel_summary;
+
+    // Travel tips
+    const tipsContainer = document.getElementById("ai-travel-tips");
+
+    tipsContainer.replaceChildren();
+
+    if (Array.isArray(report.travel_tips)) {
+
+        const list = document.createElement("ul");
+
+        report.travel_tips.forEach(tip => {
+
+            const item = document.createElement("li");
+
+            item.textContent = tip;
+
+            list.appendChild(item);
+
+        });
+
+        tipsContainer.appendChild(list);
+    }
+}
+// ====================================
+// DISPLAY CHAT MESSAGE
+// ====================================
+
+function addChatMessage(message, sender) {
+
+    const container = document.getElementById("ai-chat-messages");
+
+    const messageElement = document.createElement("div");
+
+    messageElement.className =
+        "chat-message " +
+        (sender === "user" ? "user-message" : "assistant-message");
+
+    // Use textContent to prevent HTML injection
+    messageElement.textContent = message;
+
+    container.appendChild(messageElement);
+
+    // Scroll to the latest message
+    container.scrollTop = container.scrollHeight;
+
+    return messageElement;
+}
+
+
+// ====================================
+// SEND CHAT MESSAGE TO MISTRAL
+// ====================================
+
+async function sendChatMessage() {
+
+    const input = document.getElementById("ai-chat-input");
+    const sendButton = document.getElementById("ai-chat-send");
+    const status = document.getElementById("ai-chat-status");
+
+    const message = input.value.trim();
+
+    if (!message || isChatLoading) {
+        return;
+    }
+
+    if (!lastRoute || !lastWeatherForecasts.length) {
+        status.textContent = "Please calculate a route first.";
+        return;
+    }
+
+    // Get latest fuel calculation
+    const fuel = updateFuelEstimate(lastRouteDistanceKm);
+
+    if (!fuel) {
+        status.textContent = "Please enter a valid fuel price.";
+        return;
+    }
+
+    // Calculate arrival time
+    const arrival = new Date(
+        lastDeparture.getTime() + lastRoute.duration * 1000
+    );
+
+    const routeData = {
+        distance_km: lastRouteDistanceKm,
+        driving_time_seconds: lastRoute.duration,
+        departure: lastDeparture.toISOString(),
+        arrival: arrival.toISOString()
+    };
+
+    const requestData = {
+        message: message,
+
+        // Previous conversation messages
+        history: chatHistory,
+
+        // Current journey information
+        context: {
+            route: routeData,
+            weather: lastWeatherForecasts,
+            fuel: fuel
+        }
+    };
+
+    // Display user's message
+    addChatMessage(message, "user");
+
+    input.value = "";
+
+    isChatLoading = true;
+    sendButton.disabled = true;
+    input.disabled = true;
+
+    status.textContent = "Mistral is thinking...";
+
+    const loadingMessage = addChatMessage(
+        "Thinking...",
+        "assistant"
+    );
+
+    try {
+
+        const response = await fetch("/ai/chat", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(requestData)
+        });
+
+        const data = await response.json();
+
+        if (response.status === 429) {
+            throw new Error(
+                "You've reached the chat limit. Please wait a minute before asking again."
+            );
+        }
+
+        if (!response.ok) {
+            throw new Error(data.error || "Could not get an AI response.");
+        }
+
+        if (!data.success || typeof data.answer !== "string") {
+            throw new Error("Invalid response from AI assistant.");
+        }
+
+        // Remove loading message
+        loadingMessage.remove();
+
+        // Display Mistral's answer
+        addChatMessage(data.answer, "assistant");
+
+        // Store conversation history
+        chatHistory.push(
+            { role: "user", content: message },
+            { role: "assistant", content: data.answer }
+        );
+
+        // Keep only the latest 20 messages
+        chatHistory = chatHistory.slice(-20);
+
+        status.textContent = "Ask another question about your journey.";
+
+    } catch (error) {
+
+        console.error("AI chat error:", error);
+
+        loadingMessage.remove();
+
+        addChatMessage(
+            "Sorry, I couldn't process your question. Please try again.",
+            "assistant"
+        );
+
+        status.textContent = error.message;
+
+    } finally {
+
+        isChatLoading = false;
+
+        sendButton.disabled = false;
+        input.disabled = false;
+
+        input.focus();
+    }
+}
+
+
+// ====================================
+// CHAT BUTTON EVENT
+// ====================================
+
+document.getElementById("ai-chat-send")
+    .addEventListener("click", sendChatMessage);
+
+
+// ====================================
+// SEND MESSAGE WITH ENTER
+// ====================================
+
+document.getElementById("ai-chat-input")
+    .addEventListener("keydown", function (event) {
+
+        if (event.key === "Enter") {
+            event.preventDefault();
+            sendChatMessage();
+        }
+
+    });

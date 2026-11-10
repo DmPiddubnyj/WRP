@@ -2,8 +2,120 @@ import math
 import requests
 from flask import Flask, render_template, request, jsonify
 from datetime import datetime, timezone
+import os
+from dotenv import load_dotenv
+from mistralai.client import Mistral
+import json
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+import sqlite3
+from datetime import datetime, timezone
 
 app = Flask(__name__)
+
+# Request size protection
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+# Rate limiter
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[]
+)
+# ====================================
+# DAILY MISTRAL USAGE BUDGET
+# ====================================
+
+DATABASE = "usage.db"
+DAILY_TOKEN_LIMIT = 50000
+MAX_AI_RESPONSE_TOKENS = 500
+
+def init_usage_database():
+    with sqlite3.connect(DATABASE) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_usage (
+                usage_date TEXT PRIMARY KEY,
+                used_tokens INTEGER NOT NULL DEFAULT 0,
+                reserved_tokens INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
+
+init_usage_database()
+
+def reserve_daily_budget(messages, max_output_tokens):
+    # Estimate input size conservatively using characters.
+    input_estimate = len(
+        json.dumps(messages, ensure_ascii=False)
+    )
+
+    estimated_tokens = input_estimate + max_output_tokens
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    with sqlite3.connect(DATABASE, timeout=10) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+
+        conn.execute("""
+            INSERT OR IGNORE INTO daily_usage (usage_date)
+            VALUES (?)
+        """, (today,))
+
+        row = conn.execute("""
+            SELECT used_tokens, reserved_tokens
+            FROM daily_usage
+            WHERE usage_date = ?
+        """, (today,)).fetchone()
+
+        used_tokens, reserved_tokens = row
+
+        if used_tokens + reserved_tokens + estimated_tokens > DAILY_TOKEN_LIMIT:
+            return None
+
+        conn.execute("""
+            UPDATE daily_usage
+            SET reserved_tokens = reserved_tokens + ?
+            WHERE usage_date = ?
+        """, (estimated_tokens, today))
+
+    return estimated_tokens
+
+
+def finish_daily_budget(reserved_tokens, actual_tokens):
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    with sqlite3.connect(DATABASE, timeout=10) as conn:
+        conn.execute("""
+            UPDATE daily_usage
+            SET reserved_tokens = MAX(0, reserved_tokens - ?),
+                used_tokens = used_tokens + ?
+            WHERE usage_date = ?
+        """, (reserved_tokens, actual_tokens, today))
+
+
+def release_daily_budget(reserved_tokens):
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    with sqlite3.connect(DATABASE, timeout=10) as conn:
+        conn.execute("""
+            UPDATE daily_usage
+            SET reserved_tokens = MAX(0, reserved_tokens - ?)
+            WHERE usage_date = ?
+        """, (reserved_tokens, today))
+
+# ====================================
+# MISTRAL AI CONFIGURATION
+# ====================================
+
+load_dotenv()
+
+mistral_api_key = os.getenv("MISTRAL_API_KEY")
+
+if not mistral_api_key:
+    raise RuntimeError("MISTRAL_API_KEY is missing from .env")
+
+mistral_client = Mistral(
+    api_key=mistral_api_key,
+    server="eu"
+)
 
 #route 
 @app.route("/")
@@ -445,5 +557,357 @@ def get_place_coordinates(element):
 
     return None, None
 
+
+# ====================================
+# MISTRAL AI - TRAVEL REPORT
+# ====================================
+
+@app.route("/ai/travel-report", methods=["POST"])
+def generate_travel_report():
+
+    data = request.get_json(silent=True) or {}
+
+    route = data.get("route")
+    weather = data.get("weather")
+    fuel = data.get("fuel")
+
+    # Validate incoming data
+    if not isinstance(route, dict):
+        return jsonify({"error": "Route information is required"}), 400
+
+    if not isinstance(weather, list) or not weather:
+        return jsonify({"error": "Weather information is required"}), 400
+
+    if not isinstance(fuel, dict):
+        return jsonify({"error": "Fuel information is required"}), 400
+
+    # Limit payload size
+    if len(weather) > 200:
+        return jsonify({"error": "Too many weather forecast points"}), 400
+
+    travel_data = {
+        "route": route,
+        "weather": weather,
+        "fuel": fuel
+    }
+
+    system_prompt = """
+    You are an AI road trip planning assistant.
+
+    Analyse the supplied route, weather and fuel information.
+
+    Rules:
+    - Use only the supplied information.
+    - Never invent weather conditions or route information.
+    - Do not repeat fuel distance, consumption, estimated litres or fuel cost.
+    - Do not repeat numerical fuel calculations.
+    - The frontend already displays the fuel calculation.
+    - Use the fuel information only when it adds useful context to the overall journey analysis.
+    - Explain potential weather risks along the route.
+    - Give practical driving recommendations.
+    - Never recommend changing to winter tyres based only on temperature.
+    - Do not make assumptions about current tyre type or tread depth.
+    - Distinguish general cold-weather advice from legal tyre requirements.
+    - Do not state legal requirements unless verified using an authoritative source.
+    - If tyre information is unavailable, say that the user should check their tyres and the applicable local regulations.
+    - Do not make legal guarantees.
+    - Do not invent fuel prices or vehicle specifications.
+    - If information is missing, state that clearly.
+    - Do not assume rain means snow or ice.
+    - Do not claim that roads are slippery unless the data supports it.
+
+    Return a JSON object with these exact fields:
+
+    {
+        "risk_level": "Low, Moderate or High",
+        "overall_summary": "Short journey summary",
+        "weather_analysis": "Weather conditions and potential risks",
+        "tyre_recommendations": "Practical tyre advice",
+        "fuel_summary": "Optional additional fuel-related advice without repeating numerical estimates",
+        "travel_tips": ["Tip 1", "Tip 2", "Tip 3"]
+    }
+
+    The risk level should reflect the supplied weather information.
+    """
+
+    # 1. Create messages FIRST
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt
+        },
+        {
+            "role": "user",
+            "content": json.dumps(travel_data, ensure_ascii=False)
+        }
+    ]
+
+    # 2. Check and reserve daily AI budget
+    reserved_tokens = reserve_daily_budget(
+        messages,
+        MAX_AI_RESPONSE_TOKENS
+    )
+
+    if reserved_tokens is None:
+        return jsonify({
+            "success": False,
+            "error": "The daily AI usage budget has been reached. Please try again tomorrow."
+        }), 429
+
+    # 3. Call Mistral
+    try:
+        response = mistral_client.chat.complete(
+            model="mistral-small-latest",
+            messages=messages,
+            response_format={"type": "json_object"},
+            temperature=0.3,
+            max_tokens=MAX_AI_RESPONSE_TOKENS
+        )
+
+    except Exception as error:
+        release_daily_budget(reserved_tokens)
+
+        print("Mistral travel report error:", error)
+
+        return jsonify({
+            "success": False,
+            "error": "Could not generate the travel report. Please try again."
+        }), 502
+
+    # 4. Record actual token usage
+    actual_tokens = response.usage.total_tokens
+
+    finish_daily_budget(
+        reserved_tokens,
+        actual_tokens
+    )
+
+    # 5. Process Mistral response
+    try:
+        report_content = response.choices[0].message.content
+
+        report = json.loads(report_content)
+
+        required_fields = [
+            "risk_level",
+            "overall_summary",
+            "weather_analysis",
+            "tyre_recommendations",
+            "fuel_summary",
+            "travel_tips"
+        ]
+
+        if not isinstance(report, dict) or not all(
+            field in report for field in required_fields
+        ):
+            raise ValueError("Invalid report structure returned by Mistral")
+
+        if report["risk_level"] not in ["Low", "Moderate", "High"]:
+            raise ValueError("Invalid risk level returned by Mistral")
+
+        return jsonify({
+            "success": True,
+            "report": report
+        })
+
+    except Exception as error:
+        print("Travel report processing error:", error)
+
+        return jsonify({
+            "error": "Could not process the travel report. Please try again."
+        }), 502
+
+
+# ====================================
+# MISTRAL AI - ROAD TRIP CHAT
+# ====================================
+
+@app.route("/ai/chat", methods=["POST"])
+@limiter.limit("10 per minute")
+@limiter.limit("100 per day")
+def ai_chat():
+
+    data = request.get_json(silent=True) or {}
+
+    message = data.get("message")
+    history = data.get("history", [])
+    context = data.get("context", {})
+
+    # Validate user message
+    if not isinstance(message, str) or not message.strip():
+        return jsonify({"error": "A message is required"}), 400
+
+    message = message.strip()
+
+    if len(message) > 1000:
+        return jsonify({"error": "Message is too long"}), 400
+
+    # Validate conversation history
+    if not isinstance(history, list):
+        return jsonify({"error": "Invalid conversation history"}), 400
+
+    if len(history) > 20:
+        return jsonify({"error": "Conversation history is too long"}), 400
+
+    for item in history:
+        if (
+            not isinstance(item, dict)
+            or item.get("role") not in ["user", "assistant"]
+            or not isinstance(item.get("content"), str)
+            or len(item["content"]) > 4000
+        ):
+            return jsonify({"error": "Invalid conversation message"}), 400
+
+    # Validate journey context
+    if not isinstance(context, dict):
+        return jsonify({"error": "Invalid journey context"}), 400
+
+    route = context.get("route")
+    weather = context.get("weather")
+    fuel = context.get("fuel")
+
+    if not all([
+        isinstance(route, dict),
+        isinstance(weather, list),
+        isinstance(fuel, dict)
+    ]):
+        return jsonify({"error": "Incomplete journey information"}), 400
+
+    if len(weather) > 200:
+        return jsonify({"error": "Too many weather forecast points"}), 400
+
+    system_prompt = """
+    You are an AI Road Trip Assistant.
+
+    Help the user with questions about their current journey.
+
+    You receive information about:
+    - Route distance and driving duration
+    - Departure and estimated arrival
+    - Weather forecasts along the route
+    - Fuel consumption and estimated fuel cost
+
+    IMPORTANT RULES:
+
+    1. Use the supplied journey information.
+    2. Never invent weather conditions or route information.
+    3. Do not invent places, petrol stations or sightseeing locations.
+    4. Do not change or recalculate the supplied fuel estimates.
+    5. Never recommend winter tyres based only on temperature.
+    6. Do not make legal guarantees about tyre requirements.
+    7. Clearly state when information is unavailable.
+    8. Distinguish forecast information from confirmed conditions.
+    9. Be helpful, concise and practical.
+    10. If the user asks something unrelated to travel,
+        politely explain that you are a road trip assistant.
+    """
+
+    
+    try:
+        journey_context = {
+            "route": route,
+            "weather": weather,
+            "fuel": fuel
+        }
+
+        messages = [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "system",
+                "content": (
+                    "Current journey information:\n"
+                    + json.dumps(journey_context, ensure_ascii=False)
+                )
+            }
+        ]
+
+        messages.extend(history)
+
+        messages.append({
+            "role": "user",
+            "content": message
+        })
+
+        # Reserve daily AI budget
+        reserved_tokens = reserve_daily_budget(
+            messages,
+            MAX_AI_RESPONSE_TOKENS
+        )
+
+        if reserved_tokens is None:
+            return jsonify({
+                "success": False,
+                "error": "The daily AI usage budget has been reached. Please try again tomorrow."
+            }), 429
+
+        # Call Mistral
+        try:
+            response = mistral_client.chat.complete(
+                model="mistral-small-latest",
+                messages=messages,
+                temperature=0.3,
+                max_tokens=MAX_AI_RESPONSE_TOKENS
+            )
+
+        except Exception as error:
+            release_daily_budget(reserved_tokens)
+
+            print("Mistral chat error:", error)
+
+            return jsonify({
+                "success": False,
+                "error": "Could not generate an AI response. Please try again."
+            }), 502
+
+        # Record actual token usage
+        actual_tokens = response.usage.total_tokens
+
+        finish_daily_budget(
+            reserved_tokens,
+            actual_tokens
+        )
+
+        # Extract AI response
+        answer = response.choices[0].message.content
+
+        if not isinstance(answer, str) or not answer.strip():
+            return jsonify({
+                "success": False,
+                "error": "Mistral returned an empty response."
+            }), 502
+
+        return jsonify({
+            "success": True,
+            "answer": answer
+        })
+
+    except Exception as error:
+
+        print("Mistral chat error:", error)
+
+        return jsonify({
+            "success": False,
+            "error": "Could not generate an AI response. Please try again."
+        }), 502
+
+# ====================================
+# RATE LIMIT ERROR HANDLER
+# ====================================
+
+@app.errorhandler(429)
+def ratelimit_handler(error):
+    return jsonify({
+        "success": False,
+        "error": "Too many requests. Please wait before trying again."
+    }), 429
+@app.errorhandler(413)
+def request_too_large(error):
+    return jsonify({
+        "success": False,
+        "error": "Request is too large."
+    }), 413
 if __name__ == "__main__":
     app.run(debug=True)
