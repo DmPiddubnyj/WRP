@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 app = Flask(__name__)
 
 # Request size protection
-app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 # Rate limiter
 limiter = Limiter(
     get_remote_address,
