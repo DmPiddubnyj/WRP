@@ -571,9 +571,6 @@ document.getElementById("fuel-price")
     });
 
     
-// =====================================
-// PLACES ALONG THE ROUTE
-// =====================================
 
 // Escape text received from external data
 function escapeHtml(value) {
