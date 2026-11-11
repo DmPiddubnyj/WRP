@@ -10,8 +10,16 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import sqlite3
 from datetime import datetime, timezone
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+
+app.wsgi_app = ProxyFix(
+    app.wsgi_app,
+    x_for=1,
+    x_proto=1,
+    x_host=1
+)
 
 # Request size protection
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
