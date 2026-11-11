@@ -27,7 +27,8 @@ app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=[]
+    default_limits=[],
+    storage_uri="redis://127.0.0.1:6379"
 )
 # ====================================
 # DAILY MISTRAL USAGE BUDGET
